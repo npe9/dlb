@@ -743,6 +743,8 @@ static bool dlb_initialized_through_ompt = false;
 static bool omptool_initialized = false;
 static const char *openmp_runtime_version;
 
+static uint64_t omptool_init_tid;
+
 static int omptool_initialize(ompt_function_lookup_t lookup, int initial_device_num,
         ompt_data_t *tool_data) {
 
@@ -821,7 +823,11 @@ static int omptool_initialize(ompt_function_lookup_t lookup, int initial_device_
             omptool__init(thread_spd->id, &options);
             options_finalize(&options);
             /* we save the thread ID that initialized OMPT */
-            tool_data->value = syscall(SYS_gettid);
+            /* lithe-docker 2026-10-18: libomp builds that predate the TR6 initialize
+             * signature (lookup, device, tool_data) call it as (lookup, tool_data),
+             * leaving tool_data NULL here. Nothing below needs it. */
+            omptool_init_tid = (uint64_t)syscall(SYS_gettid);
+            if (tool_data) tool_data->value = omptool_init_tid;
             omptool_initialized = true;
             return 1;
         }
@@ -846,7 +852,7 @@ static int omptool_initialize(ompt_function_lookup_t lookup, int initial_device_
 static void omptool_finalize(ompt_data_t *tool_data) {
 
     /* Protect finalization against forks and other double calls */
-    if (tool_data->value == (uint64_t)syscall(SYS_gettid)
+    if ((tool_data ? tool_data->value : omptool_init_tid) == (uint64_t)syscall(SYS_gettid)
             && omptool_initialized) {
 
         verbose(VB_OMPT, "Finalizing OMPT module");
